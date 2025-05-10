@@ -11,19 +11,35 @@ const auth = require('../middleware/auth');
 // @access  Public
 router.post('/register', async (req, res) => {
   try {
-    const { name, email, password } = req.body;
+    console.log('Registration request received:', req.body);
+    
+    // Validate request body
+    if (!req.body) {
+      console.error('Empty request body received');
+      return res.status(400).json({ msg: 'Request body is empty' });
+    }
+    
+    const { name, email, password, role } = req.body;
+    
+    // Validate required fields
+    if (!name || !email || !password) {
+      console.error('Missing required fields:', { name: !!name, email: !!email, password: !!password });
+      return res.status(400).json({ msg: 'Please provide all required fields: name, email, password' });
+    }
 
     // Check if user already exists
     let user = await User.findOne({ email });
     if (user) {
-      return res.status(400).json({ msg: 'User already exists' });
+      console.log(`User with email ${email} already exists`);
+      return res.status(409).json({ msg: 'User already exists' });
     }
 
-    // Create new user
+    // Create new user with role if provided (otherwise default role from model will be used)
     user = new User({
       name,
       email,
-      password
+      password,
+      role: role || 'user' // Use the role from request or default to 'user'
     });
 
     await user.save();
@@ -127,6 +143,38 @@ router.get('/me', auth, async (req, res) => {
     res.json(user);
   } catch (err) {
     console.error(err.message);
+    res.status(500).send('Server error');
+  }
+});
+
+// @route   POST /api/users/update-login
+// @desc    Update user's last login time
+// @access  Private
+router.post('/update-login', auth, async (req, res) => {
+  try {
+    // Find user and update lastLogin field
+    const user = await User.findByIdAndUpdate(
+      req.user.id, 
+      { 
+        $set: { lastLogin: new Date() },
+        $push: { 
+          activityLog: { 
+            action: 'login',
+            timestamp: new Date(),
+            details: { ip: req.ip }
+          }
+        }
+      },
+      { new: true }
+    ).select('-password');
+    
+    if (!user) {
+      return res.status(404).json({ msg: 'User not found' });
+    }
+    
+    res.json({ success: true, timestamp: user.lastLogin });
+  } catch (err) {
+    console.error('Error updating login time:', err.message);
     res.status(500).send('Server error');
   }
 });

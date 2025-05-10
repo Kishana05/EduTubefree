@@ -29,7 +29,15 @@ const UserSchema = new mongoose.Schema({
     type: String,
     default: ''
   },
+  lastLogin: {
+    type: Date,
+    default: null
+  },
   createdAt: {
+    type: Date,
+    default: Date.now
+  },
+  updatedAt: {
     type: Date,
     default: Date.now
   },
@@ -55,11 +63,28 @@ const UserSchema = new mongoose.Schema({
       type: Date,
       default: Date.now
     }
+  }],
+  activityLog: [{
+    action: {
+      type: String,
+      required: true
+    },
+    timestamp: {
+      type: Date,
+      default: Date.now
+    },
+    details: {
+      type: mongoose.Schema.Types.Mixed
+    }
   }]
 });
 
-// Hash password before saving
+// Update timestamps before saving
 UserSchema.pre('save', async function(next) {
+  // Update updatedAt timestamp
+  this.updatedAt = new Date();
+  
+  // Only hash the password if it has been modified (or is new)
   if (!this.isModified('password')) {
     return next();
   }
@@ -71,6 +96,12 @@ UserSchema.pre('save', async function(next) {
   } catch (error) {
     next(error);
   }
+});
+
+// Add middleware for findOneAndUpdate and findByIdAndUpdate to update updatedAt
+UserSchema.pre(['findOneAndUpdate', 'findByIdAndUpdate'], function(next) {
+  this.set({ updatedAt: new Date() });
+  next();
 });
 
 // Method to compare password

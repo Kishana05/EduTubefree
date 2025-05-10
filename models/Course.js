@@ -48,14 +48,34 @@ const CourseSchema = new mongoose.Schema({
     required: true
   },
   category: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'Category',
-    required: true
+    type: mongoose.Schema.Types.Mixed, // Changed from ObjectId to Mixed to support both ID strings and objects
+    required: true,
+    get: function(v) {
+      // If it's already an object with name property, return it
+      if (v && typeof v === 'object' && v.name) return v;
+      
+      // Otherwise, treat as an ID reference
+      return v;
+    },
+    set: function(v) {
+      // If it's an object with _id, extract the ID
+      if (v && typeof v === 'object' && v._id) return v._id;
+      
+      // If it's an object with id, extract the ID
+      if (v && typeof v === 'object' && v.id) return v.id;
+      
+      // Otherwise return as is (should be a string ID)
+      return v;
+    }
   },
   level: {
     type: String,
     enum: ['beginner', 'intermediate', 'advanced'],
     required: true
+  },
+  videoUrl: {
+    type: String,
+    default: ''
   },
   rating: {
     type: Number,

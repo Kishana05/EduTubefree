@@ -3,6 +3,7 @@ import { useAuth } from '../../context/AuthContext';
 import ProgressBar from '../../components/ui/ProgressBar';
 import { Link, useNavigate } from 'react-router-dom';
 import { Award, Clock, BookOpen, Calendar, RefreshCw, Youtube } from 'lucide-react';
+import { API_BASE_URL, API_ENDPOINTS } from '../../config/api';
 
 interface EnrolledCourse {
   _id: string;
@@ -13,6 +14,7 @@ interface EnrolledCourse {
     level: string;
     videoUrl?: string;
     description?: string;
+    duration?: string;
   };
   progress: number;
   startDate: string;
@@ -36,7 +38,7 @@ const UserDashboard: React.FC = () => {
   // Function to test API endpoints
   const testApiEndpoint = async (endpoint: string) => {
     try {
-      const response = await fetch(`http://localhost:5000${endpoint}`);
+      const response = await fetch(`${API_BASE_URL}${endpoint}`);
       const result = await (endpoint.includes('ping') ? response.text() : response.json());
       console.log(`Endpoint ${endpoint} result:`, result);
       setApiStatus(prev => ({ ...prev, [endpoint]: true }));
@@ -71,7 +73,7 @@ const UserDashboard: React.FC = () => {
 
         console.log('Fetching enrolled courses with token:', token.substring(0, 15) + '...');
 
-        const response = await fetch('http://localhost:5000/api/progress', {
+        const response = await fetch(API_ENDPOINTS.progress, {
           headers: {
             'x-auth-token': token
           }

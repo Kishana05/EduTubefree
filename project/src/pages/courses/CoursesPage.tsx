@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { API_BASE_URL, API_ENDPOINTS } from '../../config/api';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Search, Filter, X } from 'lucide-react';
 import { courses as mockCourses, categories } from '../../data/mockData';
@@ -17,56 +18,157 @@ const CoursesPage: React.FC = () => {
   const location = useLocation();
   const navigate = useNavigate();
   
-  // Load courses from localStorage or API
+  // Load courses from API with real-time polling
   useEffect(() => {
+    // Flag to track if component is mounted
+    let isMounted = true;
+    
     const loadCourses = async () => {
+      if (!isMounted) return;
       setIsLoading(true);
+      
       try {
-        // Try to get courses from localStorage first (these are courses added in admin dashboard)
-        const storedCourses = localStorage.getItem('adminCourses');
-        let coursesData: Course[] = [];
+        // Add timestamp to bust cache and ensure fresh data
+        const timestamp = new Date().getTime();
+        const apiUrl = `${API_ENDPOINTS.courses}?_t=${timestamp}`;
+        console.log(`Fetching courses from API (${new Date().toLocaleTimeString()})...`);
         
-        if (storedCourses) {
-          const parsedCourses = JSON.parse(storedCourses);
-          // Map admin courses to match the expected Course type format
-          coursesData = parsedCourses.map((course: any) => ({
-            id: course._id,
-            title: course.title,
-            description: course.description || '',
-            instructor: course.instructor || 'Unknown Instructor',
-            thumbnail: course.thumbnail || 'https://via.placeholder.com/640x360?text=No+Image',
-            category: course.category?.name || 'Uncategorized',
-            level: course.level || 'beginner',
-            rating: course.rating || 4.5,
-            duration: '3h 15m',
-            studentsCount: course.totalStudents || 0,
-            lessonsCount: 12,
-            videoUrl: course.videoUrl || null
-          }));
+        let apiCoursesFound = false;
+        try {
+          // Force a new request with no-cache
+          const response = await fetch(apiUrl, {
+            headers: {
+              'Cache-Control': 'no-cache, no-store, must-revalidate',
+              'Pragma': 'no-cache',
+              'Expires': '0'
+            }
+          });
+          
+          if (response.ok) {
+            const apiCourses = await response.json();
+            console.log(`Found ${apiCourses.length} courses from MongoDB:`, apiCourses);
+            
+            // Map API courses to match the expected Course type format
+            const coursesFromAPI = apiCourses.map((course: any) => ({
+              id: course._id,
+              title: course.title,
+              description: course.description || '',
+              instructor: course.instructor || 'Unknown Instructor',
+              thumbnail: course.thumbnail || 'https://placehold.co/640x360/eee/999?text=Course+Image',
+              category: course.category?.name || 'Uncategorized',
+              level: course.level || 'beginner',
+              rating: course.rating || 4.5,
+              duration: course.duration || '1h 30m',
+              studentsCount: course.totalStudents || 0,
+              lessonsCount: course.modules?.reduce((total: number, module: any) => total + (module.lessons?.length || 0), 0) || 0,
+              videoUrl: course.videoUrl || null
+            }));
+            
+            // If courses were found in the API, use them
+            if (coursesFromAPI.length > 0) {
+              if (isMounted) {
+                setAllCourses(coursesFromAPI);
+                setFilteredCourses(coursesFromAPI);
+                apiCoursesFound = true;
+                
+                // Update localStorage to match API data
+                localStorage.setItem('edutube_courses', JSON.stringify(apiCourses));
+                localStorage.setItem('adminCourses', JSON.stringify(apiCourses));
+                console.log(`Updated local storage with ${apiCourses.length} courses from MongoDB`);
+              }
+            }
+          } else {
+            console.warn('API response not OK:', response.status);
+          }
+        } catch (apiError) {
+          console.error('Error fetching from API:', apiError);
         }
         
-        // If no courses in localStorage or there's very few, also include mock courses
-        if (coursesData.length < 3) {
-          // Combine with mock courses, but avoid duplicates by id
-          const existingIds = new Set(coursesData.map(c => c.id));
-          const additionalMockCourses = mockCourses.filter(c => !existingIds.has(c.id));
-          coursesData = [...coursesData, ...additionalMockCourses];
+        // If API fetch didn't return any courses, try localStorage
+        if (!apiCoursesFound) {
+          console.log('No courses from API, checking localStorage...');
+          
+          // Force the browser to check local storage keys
+          const storage_keys = Object.keys(localStorage);
+          console.log('Available localStorage keys:', storage_keys);
+          
+          // Check all possible storage keys
+          const possibleKeys = ['edutube_courses', 'adminCourses', 'courses_data', 'user_courses'];
+          let storedCourses = null;
+          
+          // Try each key until we find courses
+          for (const key of possibleKeys) {
+            console.log(`Checking ${key} storage...`);
+            const courseData = localStorage.getItem(key);
+            if (courseData) {
+              console.log(`Found courses in ${key}`);
+              storedCourses = courseData;
+              break;
+            }
+          }
+          
+          // If courses exist in any storage key, use them
+          if (storedCourses) {
+            try {
+              const parsedCourses = JSON.parse(storedCourses);
+              console.log('Admin courses from localStorage:', parsedCourses);
+              
+              // Map admin courses to match the expected Course type format
+              const coursesData = parsedCourses.map((course: any) => ({
+                id: course._id,
+                title: course.title,
+                description: course.description || '',
+                instructor: course.instructor || 'Unknown Instructor',
+                thumbnail: course.thumbnail || 'https://placehold.co/640x360/eee/999?text=Course+Image',
+                category: course.category?.name || 'Uncategorized',
+                level: course.level || 'beginner',
+                rating: course.rating || 4.5,
+                duration: '3h 15m',
+                studentsCount: course.totalStudents || 0,
+                lessonsCount: 12,
+                videoUrl: course.videoUrl || null
+              }));
+              
+              // Always use admin courses even if there's just one
+              console.log('Using only admin-added courses');
+              setAllCourses(coursesData);
+              setFilteredCourses(coursesData);
+              return; // Exit early - don't fall back to mock courses
+            } catch (e) {
+              console.error('Error parsing admin courses:', e);
+            }
+          }
+          
+          // If we reach here, no admin courses were found or they couldn't be parsed
+          console.log('No valid admin courses, using mock data');
+          setAllCourses(mockCourses);
+          setFilteredCourses(mockCourses);
         }
-        
-        setAllCourses(coursesData);
-        setFilteredCourses(coursesData);
       } catch (error) {
         console.error('Error loading courses:', error);
-        // Fallback to mock data if there's an error
-        setAllCourses(mockCourses);
-        setFilteredCourses(mockCourses);
+        setAllCourses([]);
+        setFilteredCourses([]);
       } finally {
         setIsLoading(false);
       }
     };
     
+    // Load courses immediately
     loadCourses();
-  }, []);
+    
+    // Set up polling interval for real-time updates
+    const pollingInterval = setInterval(() => {
+      console.log('Polling for course updates from MongoDB...');
+      loadCourses();
+    }, 5000); // Poll every 5 seconds
+    
+    // Clean up function
+    return () => {
+      isMounted = false;
+      clearInterval(pollingInterval);
+      console.log('Courses polling stopped');
+    };
+  }, [location.search]); // Re-run when search parameters change
   
   // Apply URL parameters for filtering
   useEffect(() => {
@@ -98,7 +200,26 @@ const CoursesPage: React.FC = () => {
     }
     
     if (category) {
-      result = result.filter(course => course.category === category);
+      // Fix for category matching - handle both string and object formats
+      result = result.filter(course => {
+        // Case 1: Direct string match (e.g., course.category === 'DevOps')
+        if (typeof course.category === 'string') {
+          return (course.category as string).toLowerCase() === category.toLowerCase();
+        }
+        
+        // Case 2: Object with name property (e.g., course.category.name === 'DevOps')
+        if (course.category && typeof course.category === 'object') {
+          // Safely access the name property with type checking
+          const categoryObj = course.category as { name: string };
+          if (categoryObj.name) {
+            return categoryObj.name.toLowerCase() === category.toLowerCase();
+          }
+        }
+        
+        // Case 3: Check if category is in the title or description as fallback
+        return course.title.toLowerCase().includes(category.toLowerCase()) ||
+               (course.description && course.description.toLowerCase().includes(category.toLowerCase()));
+      });
     }
     
     if (level) {
@@ -190,7 +311,7 @@ const CoursesPage: React.FC = () => {
               >
                 <option value="">All Categories</option>
                 {categories.map(category => (
-                  <option key={category.id} value={category.name}>
+                  <option key={category._id} value={category.name}>
                     {category.name}
                   </option>
                 ))}
@@ -243,7 +364,7 @@ const CoursesPage: React.FC = () => {
                 >
                   <option value="">All Categories</option>
                   {categories.map(category => (
-                    <option key={category.id} value={category.name}>
+                    <option key={category._id} value={category.name}>
                       {category.name}
                     </option>
                   ))}

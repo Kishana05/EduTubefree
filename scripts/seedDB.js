@@ -8,11 +8,23 @@ const Category = require('../models/Category');
 // Load environment variables
 dotenv.config();
 
-// Connect to MongoDB
-mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/edutube')
-  .then(() => console.log('MongoDB connected successfully for seeding'))
+// Connect to MongoDB Atlas
+console.log('Connecting to MongoDB Atlas...');
+
+mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/edutube', {
+  useNewUrlParser: true,
+  useUnifiedTopology: true,
+  serverSelectionTimeoutMS: 10000, // Longer timeout for seeding operations
+  socketTimeoutMS: 60000, // Close sockets after 60 seconds of inactivity
+})
+  .then(() => {
+    console.log('MongoDB Atlas connected successfully for seeding');
+    console.log(`Database: ${mongoose.connection.name}`);
+    console.log(`Host: ${mongoose.connection.host}`);
+  })
   .catch(err => {
-    console.error('MongoDB connection error:', err);
+    console.error('MongoDB Atlas connection error:', err);
+    console.error('Cannot seed database without a proper connection. Exiting...');
     process.exit(1);
   });
 

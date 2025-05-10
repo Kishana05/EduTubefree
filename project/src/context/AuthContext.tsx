@@ -15,10 +15,15 @@ interface AuthResponse {
   user: User;
 }
 
-// Set the correct API URL to the backend server port (5000)
-const API_URL = 'http://localhost:5000/api';
-// Flag to use mock auth when backend is unavailable
-const USE_MOCK_AUTH = true; // Set to true to use mock auth when backend is unavailable
+// Import API configuration
+import { API_BASE_URL, API_ENDPOINTS } from '../config/api';
+
+// Set the correct API URL to the backend server port
+const API_URL = API_BASE_URL;
+
+// Flag to use mock auth only when backend is unavailable
+// Set this based on whether we can successfully ping the server
+const USE_MOCK_AUTH = false; // Set to false to prioritize MongoDB Atlas connection
 
 // Admin credentials
 const ADMIN_EMAIL = 'kishan05anand@gmail.com';
@@ -81,103 +86,137 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const login = async (email: string, password: string, role: 'user' | 'admin') => {
     setIsLoading(true);
     try {
-      if (USE_MOCK_AUTH) {
-        // For admin authentication, check against specific admin credentials
-        if (role === 'admin') {
-          if (email !== ADMIN_EMAIL || password !== ADMIN_PASSWORD) {
-            throw new Error('Invalid admin credentials. Access denied.');
-          }
-          
-          // Admin authentication successful
-          console.log('Admin authentication successful');
-          const mockAdminUser: User = {
-            id: 'admin-user-id',
-            name: 'Administrator',
-            email: ADMIN_EMAIL,
-            role: 'admin',
-            createdAt: new Date().toISOString()
-          };
-          
-          // Simulate API delay
-          await new Promise(resolve => setTimeout(resolve, 500));
-          
-          // Store mock data
-          localStorage.setItem('token', 'mock-jwt-token-admin');
-          localStorage.setItem('user', JSON.stringify(mockAdminUser));
-          
-          setUser(mockAdminUser);
-          return;
+      // First attempt to connect to the real API
+      try {
+        console.log('Attempting real API login to MongoDB Atlas');
+        const response = await fetch(API_ENDPOINTS.auth.login, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ email, password, role }) // Include role in the request
+        });
+        
+        if (!response.ok) {
+          const errorData = await response.json();
+          throw new Error(errorData.msg || 'Login failed');
         }
         
-        // For user role or if role is not specified, use regular mock authentication
-        console.log('Using mock auth for login:', email, 'as', role);
-        const mockUser: User = {
-          id: 'mock-user-id',
-          name: email.split('@')[0],
-          email,
-          role: role, // Use the role parameter
+        const data: AuthResponse = await response.json();
+        
+        // Verify the user has the requested role
+        if (data.user.role !== role) {
+          throw new Error(`You don't have ${role} privileges. Please contact the administrator.`);
+        }
+        
+        // Store token and user data
+        localStorage.setItem('token', data.token);
+        localStorage.setItem('user', JSON.stringify(data.user));
+        
+        // Update last login time in the database
+        try {
+          await fetch(API_ENDPOINTS.auth.updateLogin, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${data.token}`
+            }
+          });
+        } catch (updateError) {
+          // Non-critical error, just log it
+          console.warn('Failed to update last login time:', updateError);
+        }
+        
+        setUser(data.user);
+        console.log('Successfully logged in with MongoDB Atlas');
+        return;
+      } catch (apiError) {
+        console.error('API login failed:', apiError);
+        
+        // If not using mock auth as fallback, throw the error
+        if (!USE_MOCK_AUTH) {
+          throw apiError;
+        }
+        
+        // Otherwise proceed to mock auth as fallback
+        console.log('Falling back to mock authentication');
+      }
+      
+      // Mock authentication as fallback
+      if (role === 'admin') {
+        if (email !== ADMIN_EMAIL || password !== ADMIN_PASSWORD) {
+          throw new Error('Invalid admin credentials. Access denied.');
+        }
+        
+        // Admin authentication successful
+        console.log('Admin mock authentication successful');
+        const mockAdminUser: User = {
+          id: 'admin-user-id',
+          name: 'Administrator',
+          email: ADMIN_EMAIL,
+          role: 'admin',
           createdAt: new Date().toISOString()
         };
         
-        // Simulate API delay
-        await new Promise(resolve => setTimeout(resolve, 500));
-        
         // Store mock data
-        localStorage.setItem('token', 'mock-jwt-token');
-        localStorage.setItem('user', JSON.stringify(mockUser));
+        localStorage.setItem('token', 'mock-jwt-token-admin');
+        localStorage.setItem('user', JSON.stringify(mockAdminUser));
         
-        setUser(mockUser);
+        setUser(mockAdminUser);
         return;
       }
       
-      // If not using mock auth, use real API
-      const response = await fetch(`${API_URL}/users/login`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ email, password, role }) // Include role in the request
-      });
+      // Regular user mock authentication - check if the user exists in localStorage
+      console.log('Using mock auth for login:', email, 'as', role);
       
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.msg || 'Login failed');
+      // Check if user exists in mockUsers list
+      const existingUsers = localStorage.getItem('mockUsers') || '[]';
+      let users = [];
+      try {
+        users = JSON.parse(existingUsers);
+      } catch (e) {
+        console.error('Error parsing mockUsers:', e);
       }
       
-      const data: AuthResponse = await response.json();
+      // Find the user with matching email
+      const existingUser = users.find((u: any) => u.email === email);
       
-      // Verify the user has the requested role
-      if (data.user.role !== role) {
-        throw new Error(`You don't have ${role} privileges. Please contact the administrator.`);
+      if (!existingUser) {
+        throw new Error('User not found. Please register first.');
       }
       
-      // Store token and user data
-      localStorage.setItem('token', data.token);
-      localStorage.setItem('user', JSON.stringify(data.user));
+      // For registered users, we should have stored their password during registration
+      // Since we don't store passwords in localStorage for security reasons,
+      // let's check if this is a previously registered user with the stored information
+      const savedUserData = localStorage.getItem(`user_${email}`);
       
-      setUser(data.user);
+      if (savedUserData) {
+        try {
+          const userData = JSON.parse(savedUserData);
+          if (userData.password !== password) {
+            throw new Error('Invalid password. Please try again.');
+          }
+        } catch (e) {
+          throw new Error('Invalid password or user data. Please try again.');
+        }
+      }
+      
+      const mockUser: User = {
+        id: existingUser._id || `mock-user-id-${Date.now()}`,
+        name: existingUser.name || email.split('@')[0],
+        email,
+        role: role,
+        createdAt: existingUser.createdAt || new Date().toISOString()
+      };
+      
+      // Store mock data
+      localStorage.setItem('token', 'mock-jwt-token');
+      localStorage.setItem('user', JSON.stringify(mockUser));
+      
+      setUser(mockUser);
     } catch (error) {
-      console.error('Login failed:', error);
-      
-      if (!USE_MOCK_AUTH) {
-        throw error;
-      } else if (role === 'admin') {
-        // For admin, always throw the error - don't create mock admin for invalid credentials
-        throw error;
-      } else {
-        // If error occurs but mock auth is enabled and not trying to login as admin,
-        // still create a mock user
-        const mockUser: User = {
-          id: 'mock-user-id',
-          name: email.split('@')[0],
-          email,
-          role: role, // Use the role parameter
-          createdAt: new Date().toISOString()
-        };
-        localStorage.setItem('token', 'mock-jwt-token');
-        localStorage.setItem('user', JSON.stringify(mockUser));
-        setUser(mockUser);
-      }
+      console.error('Login completely failed:', error);
+      throw error;
     } finally {
       setIsLoading(false);
     }
@@ -197,100 +236,159 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         throw new Error('Cannot register with this admin email. Please use a different email.');
       }
       
-      if (USE_MOCK_AUTH) {
-        // Mock successful registration (for testing without backend)
-        console.log('Using mock auth for registration:', { name, email, role });
+      // First check if API is reachable
+      try {
+        console.log('Testing API connectivity...');
+        const pingResponse = await fetch(API_ENDPOINTS.ping, {
+          method: 'GET',
+          headers: {
+            'Content-Type': 'application/json'
+          }
+        }).catch(err => {
+          console.error('API connectivity test failed:', err);
+          throw new Error(`API connectivity test failed: ${err.message}`);
+        });
         
-        // For admin registration, use specific naming
-        const mockUser: User = {
-          id: role === 'admin' ? 'admin-user-id' : `user-${Date.now()}`,
-          name: role === 'admin' ? 'Administrator' : name,
-          email,
-          role: role, // Use the role parameter (defaults to 'user')
-          createdAt: new Date().toISOString()
-        };
+        console.log('API ping response status:', pingResponse.status);
         
-        // Additional fields for admin dashboard (will be stored in localStorage)
-        const mockUserExtended = {
-          ...mockUser,
-          _id: `user-${Date.now()}`,
-          status: 'active',
-          lastLogin: new Date().toISOString(),
-        };
+        if (pingResponse.ok) {
+          console.log('API is reachable! Proceeding with registration...');
+        } else {
+          throw new Error(`API is not reachable. Status: ${pingResponse.status}`);
+        }
+      } catch (pingError) {
+        console.error('API ping error:', pingError);
+        // Continue with registration attempt even if ping fails
+      }
         
-        // Simulate API delay
-        await new Promise(resolve => setTimeout(resolve, 500));
+      // Attempt to register with the real MongoDB Atlas API  
+      try {
+        console.log('Attempting registration with MongoDB Atlas:', { name, email, password: '***', role });
+        console.log('API URL being used:', `${API_URL}/users/register`);
         
-        // Store mock data
-        localStorage.setItem('token', role === 'admin' ? 'mock-jwt-token-admin' : 'mock-jwt-token');
-        localStorage.setItem('user', JSON.stringify(mockUser));
+        // Make multiple attempts to register with the API
+        let response = null;
+        let attemptCount = 0;
+        const maxAttempts = 3;
         
-        // Save user to mockUsers list in localStorage for admin dashboard
-        const existingUsers = localStorage.getItem('mockUsers') || '[]';
-        let users = [];
-        try {
-          users = JSON.parse(existingUsers);
-        } catch (e) {
-          console.error('Error parsing mockUsers:', e);
+        while (attemptCount < maxAttempts) {
+          attemptCount++;
+          try {
+            console.log(`Registration attempt ${attemptCount} of ${maxAttempts}...`);
+            
+            response = await fetch(API_ENDPOINTS.auth.register, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json'
+              },
+              body: JSON.stringify({ name, email, password, role })
+            });
+            
+            // If successful, break out of the retry loop
+            if (response.ok) {
+              console.log('Registration successful on attempt', attemptCount);
+              break;
+            }
+            
+            // If we got a response but it's not ok, check if it's a 409 (user exists)
+            if (response.status === 409) {
+              const errorData = await response.json().catch(_ => ({ msg: 'Email already in use' }));
+              throw new Error(errorData.msg || 'Email already in use');
+            }
+            
+            // Log the error and wait before retrying
+            console.log(`Attempt ${attemptCount} failed with status ${response.status}, retrying...`);
+            await new Promise(resolve => setTimeout(resolve, 1000));
+          } catch (fetchError) {
+            console.error(`Error during registration attempt ${attemptCount}:`, fetchError);
+            if (attemptCount === maxAttempts) throw fetchError;
+            await new Promise(resolve => setTimeout(resolve, 1000));
+          }
         }
         
-        // Make sure we don't add duplicates
-        const userExists = users.some((u: any) => u.email === email);
-        if (!userExists) {
-          users.push(mockUserExtended);
-          localStorage.setItem('mockUsers', JSON.stringify(users));
+        // After all attempts, if there's still no valid response, throw an error
+        if (!response || !response.ok) {
+          const errorData = response ? 
+            await response.json().catch(_ => ({ msg: 'Could not parse error response' })) : 
+            { msg: 'Failed to connect to server after multiple attempts' };
+          console.error('Registration error data:', errorData);
+          throw new Error(errorData.msg || 'Registration failed');
         }
         
-        setUser(mockUser);
+        const data: AuthResponse = await response.json();
+        
+        // Store token and user data
+        localStorage.setItem('token', data.token);
+        localStorage.setItem('user', JSON.stringify(data.user));
+        
+        setUser(data.user);
+        console.log('Successfully registered with MongoDB Atlas');
         return;
+      } catch (apiError) {
+        console.error('API registration failed:', apiError);
+        
+        // If not using mock auth as fallback, throw the error
+        if (!USE_MOCK_AUTH) {
+          throw apiError;
+        }
+        
+        // Otherwise proceed to mock auth as fallback
+        console.log('Falling back to mock registration');
       }
       
-      // For troubleshooting, log the request
-      console.log('Registration request:', { name, email, password: '***', role });
-      console.log('API URL:', `${API_URL}/users/register`);
+      // Mock registration as fallback
+      console.log('Using mock auth for registration:', { name, email, role });
       
-      const response = await fetch(`${API_URL}/users/register`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ name, email, password, role }) // Include role in the request
-      });
+      // For admin registration, use specific naming
+      const mockUser: User = {
+        id: role === 'admin' ? 'admin-user-id' : `user-${Date.now()}`,
+        name: role === 'admin' ? 'Administrator' : name,
+        email,
+        role: role, // Use the role parameter (defaults to 'user')
+        createdAt: new Date().toISOString()
+      };
       
-      // Log response status for debugging
-      console.log('Registration response status:', response.status);
+      // Additional fields for admin dashboard (will be stored in localStorage)
+      const mockUserExtended = {
+        ...mockUser,
+        _id: `user-${Date.now()}`,
+        status: 'active',
+        lastLogin: new Date().toISOString(),
+      };
       
-      if (!response.ok) {
-        const errorData = await response.json();
-        console.error('Registration error data:', errorData);
-        throw new Error(errorData.msg || 'Registration failed');
+      // Store mock data
+      localStorage.setItem('token', role === 'admin' ? 'mock-jwt-token-admin' : 'mock-jwt-token');
+      localStorage.setItem('user', JSON.stringify(mockUser));
+      
+      // Save user to mockUsers list in localStorage for admin dashboard
+      const existingUsers = localStorage.getItem('mockUsers') || '[]';
+      let users = [];
+      try {
+        users = JSON.parse(existingUsers);
+      } catch (e) {
+        console.error('Error parsing mockUsers:', e);
       }
       
-      const data: AuthResponse = await response.json();
+      // Make sure we don't add duplicates
+      const userExists = users.some((u: any) => u.email === email);
+      if (!userExists) {
+        users.push(mockUserExtended);
+        localStorage.setItem('mockUsers', JSON.stringify(users));
+      }
       
-      // Store token and user data
-      localStorage.setItem('token', data.token);
-      localStorage.setItem('user', JSON.stringify(data.user));
+      // Store user credentials separately for login validation
+      // In a real app, we'd never store passwords like this
+      // This is only for the mock authentication scenario
+      localStorage.setItem(`user_${email}`, JSON.stringify({
+        email,
+        password,
+        role
+      }));
       
-      setUser(data.user);
+      setUser(mockUser);
     } catch (error) {
-      console.error('Registration failed:', error);
-      
-      if (!USE_MOCK_AUTH || (role === 'admin' && email === ADMIN_EMAIL)) {
-        throw error;
-      } else {
-        // If error occurs but mock auth is enabled, still create a mock user
-        const mockUser: User = {
-          id: 'mock-user-id',
-          name,
-          email,
-          role: role, // Use the role parameter (defaults to 'user')
-          createdAt: new Date().toISOString()
-        };
-        localStorage.setItem('token', 'mock-jwt-token');
-        localStorage.setItem('user', JSON.stringify(mockUser));
-        setUser(mockUser);
-      }
+      console.error('Registration completely failed:', error);
+      throw error;
     } finally {
       setIsLoading(false);
     }

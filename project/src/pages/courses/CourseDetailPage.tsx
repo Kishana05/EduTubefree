@@ -1,12 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
-import { 
-  Play, CheckCircle, Clock, BookOpen, Star, 
-  ChevronDown, ChevronRight
-} from 'lucide-react';
+import { BookOpen, Star } from 'lucide-react';
 import { courses as mockCourses } from '../../data/mockData';
 import { Course, Lesson } from '../../types';
 import VideoPlaceholder from '../../components/ui/VideoPlaceholder';
+import { formatYoutubeUrl } from '../../utils/videoUtils';
 
 const CourseDetailPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
@@ -17,8 +15,9 @@ const CourseDetailPage: React.FC = () => {
   const [currentLesson, setCurrentLesson] = useState<Lesson | null>(null);
   const [expandedModules, setExpandedModules] = useState<Set<string>>(new Set());
   const [isLoading, setIsLoading] = useState(true);
-  const [progress, setProgress] = useState(0);
-  const [lessonsCompleted, setLessonsCompleted] = useState(0);
+  // These state variables will be used in future feature implementations
+  // const [progress, setProgress] = useState(0);
+  // const [lessonsCompleted, setLessonsCompleted] = useState(0);
   const [totalLessons, setTotalLessons] = useState(0);
   const [courseProgress, setCourseProgress] = useState<number>(0);
   const [completedLessons, setCompletedLessons] = useState<Set<string>>(new Set());
@@ -184,17 +183,17 @@ const CourseDetailPage: React.FC = () => {
       if (progressData) {
         try {
           const parsedData = JSON.parse(progressData);
-          setLessonsCompleted(parsedData.completedLessons?.length || 0);
-          setProgress(Math.round((parsedData.completedLessons?.length / totalLessons) * 100));
+          // Update only the course progress percentage and completed lessons set
+          // Progress tracking functionality will be expanded in future updates
+          const completedCount = parsedData.completedLessons?.length || 0;
+          setCourseProgress(Math.round((completedCount / totalLessons) * 100));
         } catch (e) {
           console.error('Error parsing progress data:', e);
-          setLessonsCompleted(0);
-          setProgress(0);
+          setCourseProgress(0);
         }
       } else {
         // Initialize with no progress
-        setLessonsCompleted(0);
-        setProgress(0);
+        setCourseProgress(0);
       }
     }
   }, [course, totalLessons]);
@@ -263,33 +262,7 @@ const CourseDetailPage: React.FC = () => {
     setExpandedModules(newExpandedModules);
   };
   
-  // Format YouTube URL for embedding
-  const formatYoutubeUrl = (url: string): string => {
-    if (!url) return '';
-    
-    // Check if it's already an embed URL
-    if (url.includes('youtube.com/embed/')) {
-      return url;
-    }
-    
-    // Handle youtube.com/watch?v= URLs
-    if (url.includes('youtube.com/watch?v=')) {
-      return url.replace('watch?v=', 'embed/').split('&')[0];
-    }
-    
-    // Handle youtu.be/ shortened URLs
-    if (url.includes('youtu.be/')) {
-      const videoId = url.split('youtu.be/')[1].split('?')[0];
-      return `https://www.youtube.com/embed/${videoId}`;
-    }
-    
-    // If it's just a video ID
-    if (url.match(/^[a-zA-Z0-9_-]{11}$/)) {
-      return `https://www.youtube.com/embed/${url}`;
-    }
-    
-    return url;
-  };
+  // We're using the formatYoutubeUrl utility function imported from '../../utils/videoUtils'
   
   if (isLoading) {
     return (
@@ -363,14 +336,14 @@ const CourseDetailPage: React.FC = () => {
             {/* Video player */}
             <div ref={videoRef} className="relative rounded-lg overflow-hidden shadow-lg max-w-3xl mx-auto">
               {(currentLesson?.videoUrl || course?.videoUrl) ? (
-                <div className="aspect-w-16 aspect-h-9 w-full h-[400px]">
+                <div className="relative" style={{ paddingTop: '56.25%', width: '100%' }}>
                   <iframe
                     src={formatYoutubeUrl(currentLesson?.videoUrl || course?.videoUrl || '')}
                     title={currentLesson?.title || course?.title || ''}
                     frameBorder="0"
                     allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
                     allowFullScreen
-                    className="w-full h-full"
+                    className="absolute top-0 left-0 w-full h-full"
                     style={{ maxWidth: '100%' }}
                   />
                 </div>
